@@ -11,6 +11,7 @@ import com.mongodb.MongoExecutionTimeoutException;
 import com.mongodb.client.*;
 
 import com.mongodb.client.model.Aggregates;
+import com.mongodb.client.model.Updates;
 import com.mongodb.client.result.UpdateResult;
 import org.bson.BsonBoolean;
 import org.bson.Document;
@@ -74,7 +75,6 @@ public class ShardTestApp {
 
             Document cmd = new Document("shardCollection", databaseName + "." + collectionName).append("key", new Document("_id", "hashed"));
 
-            //Document result = client.getDatabase("admin").runCommand(cmd);
             MongoDatabase admin = client.getDatabase("admin");
             Document result = admin.runCommand(cmd);
 
@@ -97,6 +97,9 @@ public class ShardTestApp {
            for (int i=0; i<1000000; ++i) {
                 long count_doc = collection.countDocuments(filter);
                 long count = collection.count(filter);
+               UpdateResult res = collection.updateMany(filter, Updates.set("x", i));
+               res.getModifiedCount();
+               res.getMatchedCount();
                 long count_find[] = {0};
                 collection.find(filter).forEach(new Block<Document>() {
                     @Override
@@ -115,9 +118,19 @@ public class ShardTestApp {
                         count_aggregation[0] = document.getInteger("count");
                     }
                 });
-                log.info( "count: " + count + "   countDocuments: " + count_doc + "   aggregation count: " + count_aggregation[0] + "   find count: " + count_find[0] );
+                log.info( "count: " + count + "   countDocuments: " + count_doc + "   aggregation count: " + count_aggregation[0] + "   find count: " + count_find[0]
+                  + "  update match: " + res.getMatchedCount() + "  update mod: " + res.getModifiedCount());
 
+                long [] counts =  {count, count_doc, count_aggregation[0], count_find[0], res.getModifiedCount(), res.getMatchedCount()};
 
+                for (int j=0;j<counts.length-1; ++j) {
+                    for (int k=j+1; k<counts.length-1; ++k) {
+                        if (counts[j] != counts[k]) {
+                            log.severe("---------- count mismatch ---------");
+                            break;
+                        }
+                    }
+                }
 
             }
 
