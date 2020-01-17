@@ -1,6 +1,9 @@
 package com.mongodb.tse;
 
 import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.logging.Formatter;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.logging.*;
@@ -9,28 +12,15 @@ import com.mongodb.Block;
 import com.mongodb.MongoException;
 import com.mongodb.MongoExecutionTimeoutException;
 import com.mongodb.client.*;
-
-import com.mongodb.client.model.Aggregates;
-import com.mongodb.client.model.Updates;
 import com.mongodb.client.result.UpdateResult;
 import org.bson.BsonBoolean;
 import org.bson.Document;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ShardTestApp {
 
-    private MongoClient client;
-
-    private MongoDatabase database;
-
-    private String LQ_SHARD = "Shard";
     private String _ID = "_id";
-    private int BATCH_SIZE = 1000;
     private AtomicInteger id;
 
     private final static Logger LOGGER = Logger.getLogger(Logger.GLOBAL_LOGGER_NAME);
@@ -42,12 +32,37 @@ public class ShardTestApp {
     }
 
     private void run() {
-
+        // Set logging
         LogManager logmngr = LogManager.getLogManager();
-
-        // lgmngr now contains a reference to the log manager.
         Logger log = logmngr.getLogger(Logger.GLOBAL_LOGGER_NAME);
+        Logger l0 = Logger.getLogger("");
+        l0.removeHandler(l0.getHandlers()[0]);
 
+        try {
+            FileHandler fh = new FileHandler("shardtest.log", true);
+            log.addHandler(fh);
+            fh.setFormatter(new Formatter() {
+                @Override
+                public String format(LogRecord record) {
+                    SimpleDateFormat logTime = new SimpleDateFormat("MM-dd-yyyy HH:mm:ss.SSS");
+                    Calendar cal = new GregorianCalendar();
+                    cal.setTimeInMillis(record.getMillis());
+                    return record.getLevel()
+                            + " "
+                            + logTime.format(cal.getTime())
+                            + " "
+                            + record.getSourceClassName().substring(
+                            record.getSourceClassName().lastIndexOf(".") + 1,
+                            record.getSourceClassName().length())
+                            + "."
+                            + record.getSourceMethodName()
+                            + " "
+                            + record.getMessage() + "\n";
+                }
+            });
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
 
         log.log(Level.INFO, "Init test");
 
@@ -55,88 +70,74 @@ public class ShardTestApp {
 
         try {
             // connect to cluster
-            client = MongoClients.create("mongodb://m17.mdb.com:27000,m18.mdb.com:27000,m19.mdb.com:27000");
+            MongoClient client = MongoClients.create("mongodb://m17.mdb.com:27000,m18.mdb.com:27000,m19.mdb.com:27000");
             String databaseName = "test";
-            database = client.getDatabase(databaseName);
+            MongoDatabase database = client.getDatabase(databaseName);
 
-            String collectionName = "testCollection";
+            String collectionName = "test-002";
             MongoCollection<Document> collection = database.getCollection(collectionName);
 
+            boolean create = true;
+            if (create) {
+                try {
+                    collection.drop();
+                } catch (MongoExecutionTimeoutException e) {
+                    log.severe("could not drop collection...");
+                }
+                collection.insertOne(createDoc(id.getAndIncrement()));
 
-            try {
-                collection.drop();
-            } catch ( MongoExecutionTimeoutException e) {
-                log.severe("could not drop collection...");
+                collection.createIndex(new Document(_ID, "hashed"));
+
+                Document cmd = new Document("shardCollection", databaseName + "." + collectionName).append("key", new Document("_id", "hashed"));
+
+                MongoDatabase admin = client.getDatabase("admin");
+                Document result = admin.runCommand(cmd);
+
             }
-            collection.insertOne(createDoc(id.getAndIncrement()));
-
-
-            collection.createIndex(new Document(_ID, "hashed"));
-
-            Document cmd = new Document("shardCollection", databaseName + "." + collectionName).append("key", new Document("_id", "hashed"));
-
-            MongoDatabase admin = client.getDatabase("admin");
-            Document result = admin.runCommand(cmd);
-
             // Rapidly insert many documents (to beat the balancer)
-            for (int i = 0; i < 100; ++i) {
+            int BATCH_SIZE = 1000;
+            int BATCH_COUNT = 100;
+            for (int i = 0; i < BATCH_COUNT; ++i) {
                 log.info("Batch " + i);
                 bulkInsert(collection, BATCH_SIZE);
             }
 
+            // continue insertion on collection, at a slower pace
+            InsertThread t = new InsertThread(client, databaseName, collectionName, id);
+            t.start();
+
+            // update documents, 4 at a time.
+            int i = 1;
+            while (true) {
+                Set<Integer> s = new HashSet<Integer>();
+                s.add(i * 1);
+                s.add(i * 3);
+                s.add(i * 5);
+                s.add(i * 7);
+
+                UpdateResult updateResult = updateDocuments(collection, s);
+                log.info("Updated " + s.size() + "  docs to keep the cluster warm ( "
+                        + i * 1 + "," + i * 3 + "," + i * 5 + "," + i * 7 + ")"
+                        + " modified " + updateResult.getModifiedCount()
+                        + " matched " + updateResult.getMatchedCount());
 
 
-            //Test for returned duplicates:
-            //.count()
-            //count through agg
-            //count through document_count
-            //select
-            //update
+                Document filter = new Document("_id", new Document("$in", Arrays.asList(1 * i, 3 * i, 5 * i, 7 * i)));
+                collection.find(filter).forEach(new Block<Document>() {
+                    @Override
+                    public void apply(Document document) {
+                        log.info("key: " + document.getInteger(_ID));
+                    }
+                });
 
-            Document filter = new Document("_id", new Document("$in", Arrays.asList(1, 3, 5, 7)));
-           for (int i=0; i<1000000; ++i) {
-               long count_doc = collection.countDocuments(filter);
-               long count = collection.count(filter);
-               UpdateResult res = collection.updateMany(filter, Updates.set("x", i));
-               res.getModifiedCount();
-               res.getMatchedCount();
-               long count_find[] = {0};
-               collection.find(filter).forEach(new Block<Document>() {
-                   @Override
-                   public void apply(Document document) {
-                       ++count_find[0];
-                   }
-               });
-               long count_aggregation[] = {0};
-               collection.aggregate(Arrays.asList(
-                       Aggregates.match(filter),
-                       Aggregates.count("count")
-                       )
-               ).forEach(new Block<Document>() {
-                   @Override
-                   public void apply(Document document) {
-                       count_aggregation[0] = document.getInteger("count");
-                   }
-               });
-               log.info("count: " + count + "   countDocuments: " + count_doc + "   aggregation count: " + count_aggregation[0] + "   find count: " + count_find[0]
-                       + "  update match: " + res.getMatchedCount() + "  update mod: " + res.getModifiedCount());
+                Thread.sleep(500, 0);
 
-               long[] counts = {count, count_doc, count_aggregation[0], count_find[0], res.getModifiedCount(), res.getMatchedCount()};
+                ++i;
+            }
 
-               for (int j = 0; j < counts.length - 1; ++j) {
-                   for (int k = j + 1; k < counts.length - 1; ++k) {
-                       if (counts[j] != counts[k]) {
-                           log.severe("---------- count mismatch ---------");
-                           break;
-                       }
-                   }
-               }
-
-           }
-
-            client.close();
-            log.info("End.");
-        } catch (MongoException e) {
+            //client.close();
+            //log.info("End.");
+        } catch (MongoException | InterruptedException e) {
             log.info(e.getMessage());
         }
 
@@ -154,15 +155,13 @@ public class ShardTestApp {
     }
 
 
-    private long updateDocuments(MongoCollection<LQShardDocument> collection, Set<Integer> ids){
+    private UpdateResult updateDocuments(MongoCollection<Document> collection, Set<Integer> ids) {
 
         Document updateDate = new Document();
         updateDate.put("$currentDate", new Document("updateTimeStamp", BsonBoolean.TRUE));
         Document update = new Document("$set", updateDate);
-        UpdateResult result = collection.updateMany(new Document(_ID, new Document("$in", ids)), updateDate);
 
-        //log.info("Updated {} docs to keep the cluster warm", result.getModifiedCount());
-        return result.getModifiedCount();
+        return collection.updateMany(new Document(_ID, new Document("$in", ids)), updateDate);
 
     }
 
@@ -183,4 +182,6 @@ public class ShardTestApp {
                 .append("payload12", "Executes the given command in the context of the current database with the given read preference.")
                 ;
     }
+
+
 }
