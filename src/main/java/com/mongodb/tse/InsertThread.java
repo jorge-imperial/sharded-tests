@@ -31,7 +31,7 @@ class InsertThread extends Thread {
         MongoCollection<Document> collection = database.getCollection(collName);
         // insert
         while (true) {
-            bulkInsert(collection, 100);
+            bulkInsert(collection, 1000);
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {

@@ -16,6 +16,10 @@ import com.mongodb.client.result.UpdateResult;
 import org.bson.BsonBoolean;
 import org.bson.Document;
 
+import com.mongodb.client.model.Filters;
+
+import static com.mongodb.client.model.Filters.*;
+
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ShardTestApp {
@@ -74,7 +78,7 @@ public class ShardTestApp {
             String databaseName = "test";
             MongoDatabase database = client.getDatabase(databaseName);
 
-            String collectionName = "test-002";
+            String collectionName = "test001";
             MongoCollection<Document> collection = database.getCollection(collectionName);
 
             boolean create = true;
@@ -115,15 +119,19 @@ public class ShardTestApp {
                 s.add(i * 5);
                 s.add(i * 7);
 
-                UpdateResult updateResult = updateDocuments(collection, s);
+                Document filter = new Document(_ID, new Document("$in", Arrays.asList(1 * i, 3 * i, 5 * i, 7 * i)));
+
+                Document filter_equals = new Document("$or",
+                        Arrays.asList(new Document(_ID, i), new Document(_ID, 3 * i), new Document(_ID, 5 * i), new Document(_ID, 7 * i)));
+
+                UpdateResult updateResult = updateDocuments(collection, filter_equals);
                 log.info("Updated " + s.size() + "  docs to keep the cluster warm ( "
                         + i * 1 + "," + i * 3 + "," + i * 5 + "," + i * 7 + ")"
                         + " modified " + updateResult.getModifiedCount()
                         + " matched " + updateResult.getMatchedCount());
 
 
-                Document filter = new Document("_id", new Document("$in", Arrays.asList(1 * i, 3 * i, 5 * i, 7 * i)));
-                collection.find(filter).forEach(new Block<Document>() {
+                collection.find(filter_equals).forEach(new Block<Document>() {
                     @Override
                     public void apply(Document document) {
                         log.info("key: " + document.getInteger(_ID));
@@ -155,13 +163,12 @@ public class ShardTestApp {
     }
 
 
-    private UpdateResult updateDocuments(MongoCollection<Document> collection, Set<Integer> ids) {
+    private UpdateResult updateDocuments(MongoCollection<Document> collection, Document filter) {
 
         Document updateDate = new Document();
         updateDate.put("$currentDate", new Document("updateTimeStamp", BsonBoolean.TRUE));
-        Document update = new Document("$set", updateDate);
 
-        return collection.updateMany(new Document(_ID, new Document("$in", ids)), updateDate);
+        return collection.updateMany(filter, updateDate);
 
     }
 
