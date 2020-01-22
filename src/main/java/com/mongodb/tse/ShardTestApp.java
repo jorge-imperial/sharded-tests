@@ -9,6 +9,7 @@ import java.util.logging.Logger;
 import java.util.logging.*;
 
 import com.mongodb.Block;
+import com.mongodb.MongoClientURI;
 import com.mongodb.MongoException;
 import com.mongodb.MongoExecutionTimeoutException;
 import com.mongodb.client.*;
@@ -16,9 +17,6 @@ import com.mongodb.client.result.UpdateResult;
 import org.bson.BsonBoolean;
 import org.bson.Document;
 
-import com.mongodb.client.model.Filters;
-
-import static com.mongodb.client.model.Filters.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -74,7 +72,11 @@ public class ShardTestApp {
 
         try {
             // connect to cluster
-            MongoClient client = MongoClients.create("mongodb://m17.mdb.com:27000,m18.mdb.com:27000,m19.mdb.com:27000");
+            //MongoClient client = MongoClients.create("mongodb://m17.mdb.com:27000,m18.mdb.com:27000,m19.mdb.com:27000");
+            //MongoClient client = MongoClients.create("mongodb://domo.mdb.com:27017/admin");
+
+            MongoClient client = MongoClients.create("mongodb+srv://user:XXXXXXX@cluster0-om7f7.mongodb.net/test?retryWrites=true&w=majority");
+
             String databaseName = "test";
             MongoDatabase database = client.getDatabase(databaseName);
 
